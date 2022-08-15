@@ -36,7 +36,9 @@ class MVXTwoStageDetector(Base3DDetector):
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
-                 init_cfg=None):
+                 init_cfg=None,
+                 save_torchscript=None,
+                 infer_torchscript=False):
         super(MVXTwoStageDetector, self).__init__(init_cfg=init_cfg)
 
         if pts_voxel_layer:
@@ -101,6 +103,9 @@ class MVXTwoStageDetector(Base3DDetector):
                               'key, please consider using init_cfg')
                 self.pts_backbone.init_cfg = dict(
                     type='Pretrained', checkpoint=pts_pretrained)
+
+        self.save_torchscript = save_torchscript
+        self.infer_torchscript = infer_torchscript
 
     @property
     def with_img_shared_head(self):
@@ -193,13 +198,32 @@ class MVXTwoStageDetector(Base3DDetector):
         if not self.with_pts_bbox:
             return None
         voxels, num_points, coors = self.voxelize(pts)
-        voxel_features = self.pts_voxel_encoder(voxels, num_points, coors,
-                                                img_feats, img_metas)
+        
+        voxel_features = self.do_infer(
+            self.pts_voxel_encoder,
+            "pts_voxel_encoder.pt", 
+            voxels, num_points, coors)
+        # voxel_features = self.pts_voxel_encoder(voxels, num_points, coors,
+        #                                         img_feats, img_metas)
         batch_size = coors[-1, 0] + 1
-        x = self.pts_middle_encoder(voxel_features, coors, batch_size)
-        x = self.pts_backbone(x)
+        
+        x = self.do_infer(
+            self.pts_middle_encoder, 
+            "pts_middle_encoder.pt",
+            voxel_features, coors, batch_size)
+        # x = self.pts_middle_encoder(voxel_features, coors, batch_size)
+        
+        x = self.do_infer(
+            self.pts_backbone, 
+            "pts_backbone.pt",
+            x)
+        # x = self.pts_backbone(x)
         if self.with_pts_neck:
-            x = self.pts_neck(x)
+            x = self.do_infer(
+                self.pts_neck, 
+                "pts_neck.pt",
+                x)
+            # x = self.pts_neck(x)
         return x
 
     def extract_feat(self, points, img, img_metas):
@@ -390,7 +414,12 @@ class MVXTwoStageDetector(Base3DDetector):
 
     def simple_test_pts(self, x, img_metas, rescale=False):
         """Test function of point cloud branch."""
-        outs = self.pts_bbox_head(x)
+        
+        outs = self.do_infer(
+            self.pts_bbox_head, 
+            "pts_bbox_head.pt",
+            x)
+        # outs = self.pts_bbox_head(x)
         bbox_list = self.pts_bbox_head.get_bboxes(
             *outs, img_metas, rescale=rescale)
         bbox_results = [

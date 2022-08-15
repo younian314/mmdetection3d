@@ -24,7 +24,9 @@ class VoxelNet(SingleStage3DDetector):
                  train_cfg=None,
                  test_cfg=None,
                  init_cfg=None,
-                 pretrained=None):
+                 pretrained=None,
+                 save_torchscript=None,
+                 infer_torchscript=False):
         super(VoxelNet, self).__init__(
             backbone=backbone,
             neck=neck,
@@ -36,16 +38,37 @@ class VoxelNet(SingleStage3DDetector):
         self.voxel_layer = Voxelization(**voxel_layer)
         self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
         self.middle_encoder = builder.build_middle_encoder(middle_encoder)
+        
+        self.save_torchscript = save_torchscript
+        self.infer_torchscript = infer_torchscript
 
     def extract_feat(self, points, img_metas=None):
         """Extract features from points."""
         voxels, num_points, coors = self.voxelize(points)
-        voxel_features = self.voxel_encoder(voxels, num_points, coors)
-        batch_size = coors[-1, 0].item() + 1
-        x = self.middle_encoder(voxel_features, coors, batch_size)
-        x = self.backbone(x)
+        voxel_features = self.do_infer(
+            self.voxel_encoder,
+            "pts_voxel_encoder.pt", 
+            voxels, num_points, coors)
+        # voxel_features = self.voxel_encoder(voxels, num_points, coors)
+        batch_size = coors[-1, 0] + 1
+        
+        x = self.do_infer(
+            self.middle_encoder, 
+            "pts_middle_encoder.pt",
+            voxel_features, coors, batch_size)
+        # x = self.middle_encoder(voxel_features, coors, batch_size)
+        
+        x = self.do_infer(
+            self.backbone, 
+            "pts_backbone.pt",
+            x)
+        # x = self.backbone(x)
         if self.with_neck:
-            x = self.neck(x)
+            x = self.do_infer(
+                self.neck, 
+                "pts_neck.pt",
+                x)
+            # x = self.neck(x)
         return x
 
     @torch.no_grad()
@@ -98,7 +121,11 @@ class VoxelNet(SingleStage3DDetector):
     def simple_test(self, points, img_metas, imgs=None, rescale=False):
         """Test function without augmentaiton."""
         x = self.extract_feat(points, img_metas)
-        outs = self.bbox_head(x)
+        outs = self.do_infer(
+            self.bbox_head, 
+            "pts_bbox_head.pt",
+            x)
+        # outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
             *outs, img_metas, rescale=rescale)
         bbox_results = [
